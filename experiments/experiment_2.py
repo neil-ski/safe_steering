@@ -16,4 +16,8 @@ extract_activations(
     # I thought it finished and didn't restart it.
     # To replicate my results exactly you will need to cut off the train dataset at 1306. 
     train_cutoff=1306, 
+    # If the script sees an existing checkpoint with the same prefix and file name, it will re-use it.
+    # The file name is computed based on some of the experiment parameters see get_checkpoint_filename in bucket_utils.py
+    # If you'd like to not use the checkpoint without deleting the file in the bucket, then change the prefix.
+    prefix="",
 )

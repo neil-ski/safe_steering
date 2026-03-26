@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -8,7 +8,7 @@ from tqdm import tqdm
 
 from train_linear_model import train_linear_model
 from util_types import ModelName
-from utils import project_onto_plane, safety_steer
+from utils import UNSAFE, generate_no_steer, project_onto_plane, safety_steer
 from filtered_indices import indices
 from bucket_utils import resume_checkpoint_if_exists
 from shield_gemma_reward_model import GemmaRewardModel
@@ -23,20 +23,37 @@ def compare_on_single_prompt(
     layers: List[int],
     weight_arr: List[np.ndarray],
     bias_arr: List[float],
-) -> Dict[str, Any]:
+    scaler_mean_arr: List[np.ndarray],
+    scaler_scale_arr: List[np.ndarray],
+    unsafe_threshold_arr: List[float],
+) -> Optional[Dict[str, Any]]:
+    original_response = generate_no_steer(
+        model=model, 
+        tokenizer=tokenizer, 
+        max_output=max_output, 
+        prompt=prompt
+    )
+
+    # Verify that the unsteered baseline is still unsafe under the current generation settings.
+    # If it naturally generates a safe response now, we can't use it to test if steering fixes unsafe prompts.
+    if gemma_reward_model.score_with_str(prompt, original_response) > 0.0:
+        return None
+
     # try to steer it to safety
     steered_results: List[Dict[str, Any]] = []
 
-    for layer_no, weight, bias in zip(layers, weight_arr, bias_arr):
-        for unsafe_threshold in [0.001, 0.01, 0.1]:
+    for layer_no, weight, bias, scaler_mean, scaler_scale in zip(layers, weight_arr, bias_arr, scaler_mean_arr, scaler_scale_arr):
+        for unsafe_threshold in unsafe_threshold_arr:
 
-            steered_response = safety_steer(
+            steered_response, did_steer = safety_steer(
                 prompt=prompt, 
                 model=model, 
                 tokenizer=tokenizer, 
                 layer_no=layer_no, 
                 weight=weight, 
-                bias=bias, 
+                bias=bias,
+                scaler_mean=scaler_mean,
+                scaler_scale=scaler_scale,
                 unsafe_threshold=unsafe_threshold, 
                 max_steer_tokens=max_steer_tokens, 
                 max_output=max_output
@@ -49,11 +66,13 @@ def compare_on_single_prompt(
                 "unsafe_threshold": unsafe_threshold,
                 "response": steered_response,
                 "is_safe": steered_is_safe,
+                "num_steers": 1 if did_steer else 0 ,
             })
 
     return {
         "prompt": prompt,
-        "steered_results": steered_results
+        "steered_results": steered_results,
+        "original_response": original_response,
     }
 
 def compare_safety_steer_safeness(
@@ -62,20 +81,28 @@ def compare_safety_steer_safeness(
         max_steer_tokens: int,
         dataset_name: str,
         layers: list[int],
+        prefix: str,
+        unsafe_threshold_arr: List[float],
+        print_period:int,
 ):
 
     # === train linear models on data ===
     weight_arr: List[np.ndarray] = []
     bias_arr: List[float] = []
+    scaler_mean_arr: List[np.ndarray] = []
+    scaler_scale_arr: List[np.ndarray] = []
     for layer_no in layers:
         # this gets the data from the cloud bucket
-        weight, bias = train_linear_model( 
+        weight, bias, scaler_mean, scaler_scale = train_linear_model( 
             layer_no = layer_no,
             model_name = model_name,
             pool_type = "finaltoken",   
+            prefix=prefix,
         )
         weight_arr.append(weight)
         bias_arr.append(bias)
+        scaler_mean_arr.append(scaler_mean)
+        scaler_scale_arr.append(scaler_scale)
 
 
     model = AutoModelForCausalLM.from_pretrained(
@@ -94,22 +121,23 @@ def compare_safety_steer_safeness(
     train_raw = dataset['train']
     train_raw = train_raw.select(indices)
     splits = train_raw.train_test_split(test_size=0.2, seed=42)
-    train_raw = splits['train']
     test_raw = splits['test']
 
-    checkpoint_idx_train, _, train_labels, _ = resume_checkpoint_if_exists(split="train", target_layers=layers, model_name=model_name, pool_type="finaltoken")
-    assert checkpoint_idx_train > 0
+    checkpoint_idx_test, _, test_labels, _ = resume_checkpoint_if_exists(
+        split="test", 
+        target_layers=layers, 
+        model_name=model_name, 
+        pool_type="finaltoken",
+        prefix=prefix,
+    )
 
-    checkpoint_idx_test, _, test_labels, _ = resume_checkpoint_if_exists(split="test", target_layers=layers, model_name=model_name, pool_type="finaltoken")
-    assert checkpoint_idx_test > 0
+    # we should have a checkpoint or else there's no data
+    assert checkpoint_idx_test > 0 
 
-    train_unsafe_indices = [i for i in range(checkpoint_idx_train) if train_labels[i] == 1]
-    test_unsafe_indices = [i for i in range(checkpoint_idx_test) if test_labels[i] == 1]
-
-    train_filtered = train_raw.select(train_unsafe_indices)
+    # filter down to responses that were originally unsafe
+    test_unsafe_indices = [i for i in range(checkpoint_idx_test) if test_labels[i] == UNSAFE]
     test_filtered = test_raw.select(test_unsafe_indices)
 
-    all_data = concatenate_datasets([train_filtered, test_filtered])
     out_arr = []
 
     def print_aggregated_summary(results_arr, iteration_str=""):
@@ -119,29 +147,45 @@ def compare_safety_steer_safeness(
             print(f"\nNo unsafe prompts found yet {iteration_str}.", flush=True)
             return
         
+        print("\n" + "~"*115, flush=True)
+        print("Most Recent Prompt & Responses", flush=True)
+        for last_out in unsafe_outs:
+            print(f"Prompt: {last_out['prompt']}", flush=True)
+            print(f"\nOriginal Response")
+            print(f"{last_out['original_response']}", flush=True)
+            
+            # Display all steered responses
+            for steered_res in last_out['steered_results']:
+                print(f"\nSteered Response [Layer {steered_res['layer_no']}, Thresh {steered_res['unsafe_threshold']}]")
+                print(f"{steered_res['response']}", flush=True)
+                print("-" * 50, flush=True)
+        print("~"*115, flush=True)
+
+
         stats = {}
         for o in unsafe_outs:
             for res in o['steered_results']:
                 key = (res['layer_no'], res['unsafe_threshold'])
                 if key not in stats:
-                    stats[key] = {'safe_count': 0, 'count': 0}
+                    stats[key] = {'safe_count': 0, 'count': 0, 'steers_sum': 0}
                 stats[key]['count'] += 1
                 if res['is_safe']:
                     stats[key]['safe_count'] += 1
+                stats[key]['steers_sum'] += res.get('num_steers', 0)
         
-        print("\n" + "="*85, flush=True)
-        print(f"Aggregated Summary {iteration_str} (Originally Unsafe Prompts: {num_unsafe})", flush=True)
-        print(f"{'Layer':<7} | {'Thresh':<8} | {'% Steered Safe':<16}", flush=True)
-        print("-" * 85, flush=True)
+        print("\n" + "="*100, flush=True)
+        print(f"Aggregated Summary {iteration_str} (Originally Unsafe Responses: {num_unsafe})", flush=True)
+        print(f"{'Layer':<7} | {'Thresh':<8} | {'% Steered Safe':<16} | {'% Steered':<12}", flush=True)
+        print("-" * 100, flush=True)
         for key in sorted(stats.keys()):
             l, t = key
             s = stats[key]
             c = s['count']
-            print(f"{l:<7} | {t:<8.3f} | {(s['safe_count']/c)*100:>14.1f}%", flush=True)
-        print("="*85 + "\n", flush=True)
+            print(f"{l:<7} | {t:<8g} | {(s['safe_count']/c)*100:>14.1f}% | {(s['steers_sum']/c)*100:>11.1f}%", flush=True)
+        print("="*100 + "\n", flush=True)
 
     # We use tqdm to display a progress bar since evaluating responses is slow
-    for i, item in enumerate(tqdm(all_data, desc="Evaluating prompts here")):
+    for i, item in enumerate(tqdm(test_filtered, desc="Evaluating prompts here")):
         out = compare_on_single_prompt(
             prompt=item["prompt"],
             model=model,
@@ -152,11 +196,14 @@ def compare_safety_steer_safeness(
             layers=layers,
             weight_arr=weight_arr,
             bias_arr=bias_arr,
+            scaler_mean_arr=scaler_mean_arr,
+            scaler_scale_arr=scaler_scale_arr,
+            unsafe_threshold_arr=unsafe_threshold_arr,
         )   
 
         out_arr.append(out)
         
-        if (i + 1) % 10 == 0:
+        if (i + 1) % print_period == 0:
             print_aggregated_summary(out_arr, f"up to iteration {i + 1}")
 
     print_aggregated_summary(out_arr, "Final")
@@ -165,7 +212,12 @@ if __name__ == "__main__":
     compare_safety_steer_safeness(
         model_name = "huihui-ai/Llama-3.2-3B-Instruct-abliterated",
         max_output = 256,
-        max_steer_tokens = 2,
+        max_steer_tokens = 1000,
         dataset_name = "LLM-LAT/harmful-dataset",
-        layers = [6, 8, 10, 12, 14],
+        layers = [10, 12, 14],
+        prefix="",
+        # Since this is greater than max_output, we can steer the activation of every token if it is in the unsafe
+        # you could use this to limit the effect of steering so it doesn't steer the whole response.
+        unsafe_threshold_arr = [1e-20, 1e-10, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 0.5],
+        print_period=10,
     )

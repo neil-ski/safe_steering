@@ -61,7 +61,7 @@ class GemmaRewardModel(nn.Module):
         device_map="auto",
     )
 
-    self.base_model.eval() # change to eval mode # TODO hmmm what should this be for training?
+    self.base_model.eval() # Keep in eval mode since we are strictly using this as a frozen reward model
 
     # cache token ids
     # Taken from official documentation

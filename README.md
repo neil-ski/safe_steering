@@ -25,7 +25,7 @@ docker run --rm -it \
   --gpus all \
   -e HF_TOKEN \
   -v $(pwd)/gcs_key.json:/workspace/safe_steer/gcs_key.json \
-  safe-steer python -m experiment_1
+  safe-steer python -m experiments.experiment_1
 
 ```
 
@@ -35,7 +35,7 @@ docker run --rm -it \
   --gpus all \
   -e HF_TOKEN \
   -v $(pwd)/gcs_key.json:/workspace/safe_steer/gcs_key.json \
-  safe-steer python -m experiment_2
+  safe-steer python -m experiments.experiment_2
 
 ```
 
@@ -45,7 +45,7 @@ docker run --rm -it \
   --gpus all \
   -e HF_TOKEN \
   -v $(pwd)/gcs_key.json:/workspace/safe_steer/gcs_key.json \
-  safe-steer python -m experiment_3
+  safe-steer python -m experiments.experiment_3
 
 ```
 
@@ -55,7 +55,7 @@ docker run --rm -it \
   --gpus all \
   -e HF_TOKEN \
   -v $(pwd)/gcs_key.json:/workspace/safe_steer/gcs_key.json \
-  safe-steer python -m experiment_4
+  safe-steer python -m experiments.experiment_4
 
 ```
 
@@ -63,14 +63,10 @@ Because we are building the docker image on the same machine we are running it o
 
 # Building locally
 
-First build the container:
 ```
 git clone https://github.com/neil-ski/safe_steer.git
 
 cd safe_steer
-
-# this is your google cloud credentials that we use for the GCS bucket
-vim gcs_key.json
 
 docker build -t safe-steer .
 
@@ -97,4 +93,4 @@ Note that the file names don't have different run numbers or dates in them so if
 
 # Reproducibility
 
-I've seeded all of the random number generators I know of and my checkpoints include the RNG values so that it should be reproducible. 
+I've seeded all of the random number generators I know of and my checkpoints include the RNG values and upon restarting from a checkpoint it uses those RNG values. I've tested it a little so far and it seems to be reproducible. 

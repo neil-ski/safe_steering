@@ -1,8 +1,12 @@
 import os
 import random
 import numpy as np
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 import torch
+from transformers import PreTrainedModel, PreTrainedTokenizerBase
+
+SAFE = 0 
+UNSAFE = 1
 
 def set_seed(seed: int = 42):
     random.seed(seed)
@@ -50,27 +54,43 @@ def login_to_hugging_face():
 def sigmoid(x: float) -> float:
     return 1 / (1 + np.exp(-x))
 
-def project_onto_plane(weight: torch.Tensor, bias: float, unsafe_threshold: float, original_activation: torch.Tensor) -> torch.Tensor:
+def project_onto_plane(
+    weight: torch.Tensor, 
+    bias: float, 
+    scaler_mean: torch.Tensor,
+    scaler_scale: torch.Tensor,
+    unsafe_threshold: float, 
+    original_activation: torch.Tensor
+) -> Tuple[torch.Tensor, bool]:
     assert len(weight) == len(original_activation)
     assert weight.ndim == 1 and original_activation.ndim == 1
     assert weight.is_floating_point() and original_activation.is_floating_point()
 
     assert 0 < unsafe_threshold and unsafe_threshold < 1
 
-    logits = torch.dot(weight, original_activation) + bias
+    # scale cuz data is normalized for linear probe
+    scaled_activation = (original_activation - scaler_mean) / scaler_scale
+
+    logits = torch.dot(weight, scaled_activation) + bias
     if torch.sigmoid(logits) > unsafe_threshold:
+
         target_logit = np.log((1.0 / unsafe_threshold) - 1.0)
         weight_sq_norm = torch.dot(weight, weight)
+
+        # again scale
         scaling = (logits + target_logit) / weight_sq_norm
-        projected = original_activation - weight * scaling
-        return projected
+        projected_scaled = scaled_activation - weight * scaling
+
+        # scale the projected activation back to the original space
+        projected_original = (projected_scaled * scaler_scale) + scaler_mean
+        return projected_original, True
     else:
-        return original_activation
+        return original_activation, False
     
 def get_inputs(
         prompt: str,
-        model,
-        tokenizer,
+        model: PreTrainedModel,
+        tokenizer: PreTrainedTokenizerBase,
     ):
     messages = [
         {"role": "system", "content": "You are a helpful assistant."},
@@ -81,8 +101,8 @@ def get_inputs(
     return inputs
 
 def generate_no_steer(
-    model,
-    tokenizer,
+    model: PreTrainedModel,
+    tokenizer: PreTrainedTokenizerBase,
     max_output: int,        
     prompt: str,
 ) -> str:
@@ -95,20 +115,25 @@ def generate_no_steer(
 
 def safety_steer(
         prompt: str, 
-        model, 
-        tokenizer, 
+        model: PreTrainedModel, 
+        tokenizer: PreTrainedTokenizerBase, 
         layer_no: int,
         weight: np.ndarray, 
-        bias: float, 
+        bias: float,
+        scaler_mean: np.ndarray,
+        scaler_scale: np.ndarray,
         unsafe_threshold: float,
         max_steer_tokens: int,
         max_output: int,
-    ) -> str:
+    ) -> Tuple[str, bool]:
     inputs = get_inputs(prompt=prompt, model=model, tokenizer=tokenizer)
     # convert from np array to torch tensor
     weight_t = torch.tensor(weight, dtype=torch.float32, device=model.device)
+    scaler_mean_t = torch.tensor(scaler_mean, dtype=torch.float32, device=model.device)
+    scaler_scale_t = torch.tensor(scaler_scale, dtype=torch.float32, device=model.device)
 
     steer_count = [0]
+    actual_steers = [0]
     def steering_hook(module, args, output):
         if steer_count[0] >= max_steer_tokens:
             return output
@@ -119,12 +144,22 @@ def safety_steer(
         current_activation = hidden_states[0, -1, :].detach().to(torch.float32)
         
         # get projection
-        projected_tensor = project_onto_plane(weight_t, bias, unsafe_threshold, current_activation).to(model.dtype)
+        projected_tensor, was_steered = project_onto_plane(
+            weight=weight_t, 
+            bias=bias, 
+            scaler_mean=scaler_mean_t,
+            scaler_scale=scaler_scale_t,
+            unsafe_threshold=unsafe_threshold, 
+            original_activation=current_activation
+        )
+        projected_tensor = projected_tensor.to(model.dtype)
         
         # clone the hidden states to safely mutate without breaking KV cache references
         hidden_states = hidden_states.clone()
         hidden_states[0, -1, :] = projected_tensor
         steer_count[0] += 1
+        if was_steered:
+            actual_steers[0] += 1
         
         return (hidden_states,) + output[1:] if isinstance(output, tuple) else hidden_states
 
@@ -135,4 +170,4 @@ def safety_steer(
     
     input_len = inputs.input_ids.shape[1]
     response = tokenizer.decode(generated_ids[0][input_len:], skip_special_tokens=True)
-    return response
+    return response, actual_steers[0] > 0

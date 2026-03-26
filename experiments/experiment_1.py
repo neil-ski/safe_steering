@@ -1,7 +1,7 @@
 from collections import defaultdict
 
 from datasets import load_dataset
-from shield_gemma_reward_model import GemmaRewardModel
+from gemma_reward_model import GemmaRewardModel
 from utils import set_seed
 
 # We want to ensure that our reward model works for the dataset we are using for training.
@@ -16,7 +16,7 @@ reward_model = GemmaRewardModel()
 set_seed(0)
 
 anomalies = defaultdict(list)
-for row in dataset:
+for i, row in enumerate(dataset):
     prompt = row["prompt"]
     rejected_response = row["rejected"]
     chosen_response = row["chosen"]
@@ -28,11 +28,10 @@ for row in dataset:
         anomalies["prompt"].append(prompt)
         anomalies["rejected"].append(rejected_response)
         anomalies["chosen"].append(chosen_response)
-        anomalies["rejected"].append(rejected_response)
-        anomalies["chosen"].append(chosen_response)
+        anomalies["index"].append(i)
 
 
-print(anomalies)
-# TODO it would be good to write this to disk 
+# TODO it would be good to write this to disk in a programmatic way.
 # I put this in filtered_indices.py
-print(set(range(len(dataset))) - set(anomalies[""]))
+print(anomalies)
+print(set(range(len(dataset))) - set(anomalies["index"]))

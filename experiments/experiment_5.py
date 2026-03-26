@@ -86,6 +86,7 @@ def compare_safety_steer_scored_res(
         prefix: str,
         unsafe_threshold_arr: list[float],
         print_period: int,
+        max_samples: int,
 ):
 
     # === train linear models on data ===
@@ -121,13 +122,18 @@ def compare_safety_steer_scored_res(
         tokenizer.pad_token = tokenizer.eos_token
 
     dataset = load_dataset(dataset_name)
-    train_raw = dataset['train']
-    train_raw = train_raw.select(indices)
-    splits = train_raw.train_test_split(test_size=0.2, seed=42)
-    train_raw = splits['train']
+    # The dolly dataset only has a 'train' split, so we create our own test split.
+    splits = dataset['train'].train_test_split(test_size=0.2, seed=42)
     test_raw = splits['test']
 
-    checkpoint_idx_test, _, test_labels, _ = resume_checkpoint_if_exists(
+    test_raw = test_raw.rename_column("instruction", "prompt")
+    test_raw = test_raw.select(range(max_samples))
+
+    # The `compare_on_single_prompt` function filters for prompts that generate
+    # a safe original response. Since we are using a harmless dataset, we can
+    # iterate over the entire test set. We still need to check for a checkpoint
+    # to ensure the activation data exists.
+    checkpoint_idx_test, _, _, _ = resume_checkpoint_if_exists(
         split="test", 
         target_layers=layers, 
         model_name=model_name, 
@@ -138,9 +144,7 @@ def compare_safety_steer_scored_res(
     # we should have a checkpoint or else there's no data
     assert checkpoint_idx_test > 0
 
-    # filter down to responses that were originally safe
-    test_safe_indices = [i for i in range(checkpoint_idx_test) if test_labels[i] == SAFE]
-    test_filtered = test_raw.select(test_safe_indices)
+    test_filtered = test_raw
 
     out_arr = []
 
@@ -230,10 +234,12 @@ if __name__ == "__main__":
     compare_safety_steer_scored_res(
         model_name = "huihui-ai/Llama-3.2-3B-Instruct-abliterated",
         max_output = 256,
-        max_steer_tokens = 1000,
-        dataset_name = "LLM-LAT/harmful-dataset",
+        # since this is greater than max_output we will always steer every token in every response
+        max_steer_tokens = 2000,
+        dataset_name = "databricks/databricks-dolly-15k",
         layers = [10, 12, 14],
         prefix="",
-        unsafe_threshold_arr = [1e-20, 1e-10, 1e-5, 1e-4],
+        unsafe_threshold_arr = [1e-20, 1e-10, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 0.5],
         print_period = 10,
+        max_samples = 50,
     )

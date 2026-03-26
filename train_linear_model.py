@@ -1,9 +1,8 @@
 from utils import set_seed
-from typing import Tuple
+from typing import Optional, Tuple
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import confusion_matrix
 from sklearn.preprocessing import StandardScaler
-
 from bucket_utils import resume_checkpoint_if_exists
 from util_types import ModelName, PoolingStrategy
 
@@ -13,11 +12,16 @@ def train_linear_model(
     layer_no: int, 
     model_name: ModelName, 
     pool_type: PoolingStrategy,
-) -> Tuple[np.ndarray, float]:
+    prefix: str,
+) -> Tuple[np.ndarray, float, np.ndarray, np.ndarray]:
     set_seed(42)
 
     train_idx, train_x_dict, train_y_arr, _ = resume_checkpoint_if_exists(
-        split='train', target_layers=[layer_no], pool_type=pool_type, model_name=model_name
+        prefix=prefix,
+        split='train', 
+        target_layers=[layer_no], 
+        pool_type=pool_type, 
+        model_name=model_name
     )
     if train_idx == 0:
         raise FileNotFoundError("No checkpoint found on GCS for the train split. Please run extraction first.")
@@ -30,7 +34,11 @@ def train_linear_model(
     train_y = train_y_arr[:train_idx]
 
     test_idx, test_x_dict, test_y_arr, _ = resume_checkpoint_if_exists(
-        split='test', target_layers=[layer_no], pool_type=pool_type, model_name=model_name
+        prefix=prefix,
+        split='test', 
+        target_layers=[layer_no], 
+        pool_type=pool_type, 
+        model_name=model_name
     )
     if test_idx == 0:
         raise FileNotFoundError("No checkpoint found on GCS for the test split. Please run extraction first.")
@@ -43,31 +51,33 @@ def train_linear_model(
 
     print(f"\n--- Diagnostic Check for Layer {layer_no} ---")
     print(f"train_x shape: {train_x.shape}")
-    std_across_samples = np.std(train_x, axis=0).mean()
-    print(f"Mean feature standard deviation across samples: {std_across_samples:.6f}")
+    mean_across_samples = np.mean(train_x, axis=0)
+    print(f"Mean feature values across samples: {mean_across_samples}")
+    std_across_samples = np.std(train_x, axis=0)
+    print(f"Mean feature standard deviation across samples: {std_across_samples}")
     if len(train_x) > 1:
         is_identical = np.allclose(train_x[0], train_x[1])
         print(f"Are sample 0 and sample 1 exactly identical? {'Yes!!' if is_identical else 'No'}")
     print("---------------------------------------------")
-
+    
     # normalize data
     scaler = StandardScaler()
     scaler.fit(train_x)
     train_x = scaler.transform(train_x)
     test_x = scaler.transform(test_x)
-    
+
     print(f"Train label distribution: Safe (0): {len(train_y) - np.sum(train_y)} | Unsafe (1): {np.sum(train_y)}")
     print(f"Test label distribution:  Safe (0): {len(test_y) - np.sum(test_y)} | Unsafe (1): {np.sum(test_y)}")
 
-    chosen_classifier = None
+    chosen_classifier: Optional[LogisticRegression] = None
     
     # train linear model with no regularization and different regularizations
     for c_val in [0.001]:
         print(f"\n--- C={c_val if c_val is not None else 'None (No Regularization)'} ---")
         if c_val is None:
-            classifier = LogisticRegression(max_iter=500, penalty=None)
+            classifier = LogisticRegression(max_iter=5000, penalty=None)
         else:
-            classifier = LogisticRegression(max_iter=500, C=c_val)
+            classifier = LogisticRegression(max_iter=5000, C=c_val)
             
         classifier.fit(train_x, train_y)
         
@@ -88,7 +98,8 @@ def train_linear_model(
         chosen_classifier = classifier
 
     # scikit-learn returns them as arrays of shape (1, n_features) and (1,) for binary classification
+    assert chosen_classifier is not None
     weight = chosen_classifier.coef_[0]
     bias = float(chosen_classifier.intercept_[0])
     
-    return weight, bias
+    return weight, bias, scaler.mean_, scaler.scale_

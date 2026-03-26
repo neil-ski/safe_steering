@@ -19,7 +19,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
     transformers \
     accelerate \
     datasets \
-    scikit-learn
+    scikit-learn \
+    pytest
 
 COPY . .
 

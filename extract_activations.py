@@ -9,7 +9,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel, P
 from bucket_utils import resume_checkpoint_if_exists, upload_checkpoint
 from util_types import DataSplit, ModelName, PoolingStrategy
 from shield_gemma_reward_model import GemmaRewardModel
-from utils import get_rng_state, login_to_hugging_face, set_rng_state, set_seed
+from utils import SAFE, UNSAFE, get_rng_state, login_to_hugging_face, set_rng_state, set_seed
 
 import torch._dynamo
 torch._dynamo.config.capture_scalar_outputs = True
@@ -35,6 +35,7 @@ def handle_batch(
         y_arr: np.memmap,
         disable_hooks: List[bool],
         checkpoint_period: int,
+        prefix: str,
     ) -> Tuple[int, int]:
     # This isn't a constant if the length of the dataset isn't a multiple of our chosen
     # batch size and we are on the last batch. Or if we changed how we selected batches or did streaming etc.
@@ -140,11 +141,7 @@ def handle_batch(
     safe_labels = []
     for prompt, response in zip(original_prompts, responses):
         is_safe = gemma_reward_model.is_safe(prompt, response)
-        safe_labels.append(0 if is_safe else 1)
-        
-        # print out the responses labeled safe and unsafe
-        #status = "SAFE" if is_safe else "UNSAFE"
-        #tqdm.write(f"\n[{status}]\nPrompt: {prompt}\nResponse: {response}\n{'-'*40}")
+        safe_labels.append(SAFE if is_safe else UNSAFE)
 
     # save labels in y
     y_arr[idx:idx+current_batch_size] = np.array(safe_labels, dtype=np.int64)
@@ -171,6 +168,7 @@ def handle_batch(
             pool_type=pool_type, 
             model_name=model_name,
             rng_state=get_rng_state(),
+            prefix=prefix,
         )
         
     return idx + current_batch_size, batch_count + 1
@@ -188,6 +186,7 @@ def save_all_layers_one_pass(
         max_len_input: int,
         max_len_output: int,
         checkpoint_period: int,
+        prefix: str,
     ):
     n = len(loader.dataset)
     
@@ -197,7 +196,8 @@ def save_all_layers_one_pass(
         pool_type=pool_type, 
         model_name=model_name, 
         n=n, 
-        d=d
+        d=d,
+        prefix=prefix,
     ) 
     # Restore the generator states right before processing starts
     set_rng_state(rng_state)
@@ -241,6 +241,7 @@ def save_all_layers_one_pass(
                 max_len_output=max_len_output,
                 disable_hooks=disable_hooks, # this gets mutated across iterations
                 checkpoint_period=checkpoint_period,
+                prefix=prefix,
             )
 
     finally:
@@ -257,7 +258,8 @@ def save_all_layers_one_pass(
             target_layers=target_layers, 
             pool_type=pool_type, 
             model_name=model_name,
-            rng_state=get_rng_state()
+            rng_state=get_rng_state(),
+            prefix=prefix
         )
 
 
@@ -273,6 +275,7 @@ def extract_activations(
     seed: int,
     selected_indices: Optional[List[int]],
     train_cutoff: int,
+    prefix:str,
 ):
     set_seed(seed)
 
@@ -375,6 +378,7 @@ def extract_activations(
         max_len_input=max_len_input,
         max_len_output=max_len_output,
         checkpoint_period=checkpoint_period,
+        prefix=prefix,
     )
 
     save_all_layers_one_pass(
@@ -390,4 +394,5 @@ def extract_activations(
         max_len_input=max_len_input,
         max_len_output=max_len_output,
         checkpoint_period=checkpoint_period,
+        prefix=prefix,
     )

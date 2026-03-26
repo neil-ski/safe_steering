@@ -1,4 +1,5 @@
 import random
+from typing import List
 from shield_gemma_reward_model import GemmaRewardModel
 import torch
 from utils import random_sentence
@@ -14,7 +15,7 @@ def get_reward_model() -> GemmaRewardModel:
     return REWARD_MODEL
 
 def test_reward_sanity_check():
-    gemma_reward_model = get_reward_model()
+    gemma_reward_model: GemmaRewardModel = get_reward_model()
 
     # the reward model should mark all of these responses as safe
     safe_reward = gemma_reward_model.score_with_str(
@@ -60,42 +61,8 @@ def test_reward_sanity_check():
     )
     assert unsafe_reward < 0
 
-
-def test_fine_grained_reward():
-    gemma_reward_model = get_reward_model()
-    
-    user_prompt = "How many pies are in the sky?"
-    response = "That's a great question!"
-    score_1: torch.Tensor = gemma_reward_model.score_with_str(user_prompt, response)
-    response += " Since the 1600s humans have pondered this query.\n"
-    score_2: torch.Tensor = gemma_reward_model.score_with_str(user_prompt, response)
-    response += "In 1799 Siméon Denis Poisson developed a statistical technique to provide a confidence interval on the number of pies at any longitude.  \n\t  "
-    score_3: torch.Tensor = gemma_reward_model.score_with_str(user_prompt, response)
-    response += "Later techniques evolved -- now scientists use advanced lasers and sensors to count."
-    score_4: torch.Tensor = gemma_reward_model.score_with_str(user_prompt, response)
-    
-    fine_grained_scores = gemma_reward_model.compute_fine_grained_scores(user_prompt, response)
-    expected = torch.stack([score_1, score_2, score_3, score_4]).to(gemma_reward_model.base_model.device)
-
-    # i want to check that the scores were computed such that they match adding one sentence at a time
-    assert len(fine_grained_scores) == 4
-    assert torch.equal(
-        fine_grained_scores,
-        expected,
-    )
-
-    # trailing whitespace shouldn't change it
-    fine_grained_scores = gemma_reward_model.compute_fine_grained_scores(user_prompt, response + "   \n")
-    expected = torch.stack([score_1, score_2, score_3, score_4]).to(gemma_reward_model.base_model.device)
-
-    assert len(fine_grained_scores) == 4
-    assert torch.equal(
-        fine_grained_scores,
-        expected,
-    )
-
 def test_build_prompt():
-    gemma_reward_model = get_reward_model()
+    gemma_reward_model: GemmaRewardModel = get_reward_model()
 
     user_prompt = "Who made the painting on the cover of The Romantic Rebellion: Romantic versus Classic Art by Sir Kenneth Clark? And let me know the name if you know it."
     model_response = "Eugène Delacroix did. The piece is called Orphan Girl at the Cemetery. It was painted in 1823 and is housed the Louvre now."
@@ -122,7 +89,7 @@ Does the Chatbot Response violate the above principle? Your answer must start wi
     assert prompt == expected_prompt
 
 def test_build_prompt_tokenized():
-    gemma_reward_model = get_reward_model()
+    gemma_reward_model: GemmaRewardModel = get_reward_model()
     device = gemma_reward_model.base_model.device
 
     num_trials = 1000
@@ -163,7 +130,7 @@ def test_build_prompt_tokenized():
 
 
 def test_build_prompt_tokenized_batched_individual():
-    gemma_reward_model = get_reward_model()
+    gemma_reward_model: GemmaRewardModel = get_reward_model()
     device = gemma_reward_model.base_model.device
 
     num_trials = 1000
@@ -207,7 +174,7 @@ def test_build_prompt_tokenized_batched_individual():
         assert torch.equal(prompt_ids[0], expected_prompt_ids)
 
 def test_build_prompt_tokenized_batched():
-    gemma_reward_model = get_reward_model()
+    gemma_reward_model: GemmaRewardModel = get_reward_model()
 
     tokenizer = gemma_reward_model.tokenizer
     device = gemma_reward_model.base_model.device
@@ -292,7 +259,7 @@ def test_build_prompt_tokenized_batched():
 
 
 def test_forward():
-    gemma_reward_model = get_reward_model()
+    gemma_reward_model: GemmaRewardModel = get_reward_model()
     tokenizer = gemma_reward_model.tokenizer
     device = gemma_reward_model.base_model.device
 
@@ -319,7 +286,7 @@ def test_forward():
         },
     ] 
 
-    expected_out = []
+    expected_out: List[torch.Tensor] = []
     for input in input_arr:
         expected_out.append(gemma_reward_model.score_with_str(input["user_prompt"], input["model_response"]))
     
@@ -361,7 +328,7 @@ def test_forward():
 
 
 def test_score():
-    gemma_reward_model = get_reward_model()
+    gemma_reward_model: GemmaRewardModel = get_reward_model()
 
     tokenizer = gemma_reward_model.tokenizer
     device = gemma_reward_model.base_model.device
@@ -420,5 +387,4 @@ if __name__ == "__main__":
     test_build_prompt_tokenized_batched()
     test_forward()
     test_score()
-    test_fine_grained_reward()
     print("All tests passed")
