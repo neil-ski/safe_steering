@@ -73,7 +73,7 @@ Because we are building the docker image on the same machine we are running it o
 
 You can also start a shell in the container with 
 
-``
+```
 docker run --rm -it \
   --gpus all \
   safe-steer /bin/bash
