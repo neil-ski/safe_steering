@@ -227,6 +227,7 @@ def compare_safety_steer_scored_res(
     print_aggregated_summary(out_arr, "Final")
 
 if __name__ == "__main__":
+    set_seed(0)
     compare_safety_steer_scored_res(
         model_name = "huihui-ai/Llama-3.2-3B-Instruct-abliterated",
         max_output = 256,
@@ -234,6 +235,8 @@ if __name__ == "__main__":
         dataset_name = "LLM-LAT/harmful-dataset",
         layers = [10, 12, 14],
         prefix="",
-        unsafe_threshold_arr = [1e-20, 1e-10, 1e-5, 1e-4],
+        # Since this is greater than max_output, we can steer the activation of every token if it is in the unsafe
+        # you could use this to limit the effect of steering so it doesn't steer the whole response.
+        unsafe_threshold_arr = [1e-20, 1e-10, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 0.5],
         print_period = 10,
     )

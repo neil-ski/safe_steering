@@ -8,7 +8,7 @@ from datasets import load_dataset, concatenate_datasets
 
 from train_linear_model import train_linear_model
 from util_types import ModelName
-from utils import SAFE, generate_no_steer, project_onto_plane, safety_steer
+from utils import SAFE, generate_no_steer, project_onto_plane, safety_steer, set_seed
 from filtered_indices import indices
 from phi_4_judge import Phi4Judge
 from bucket_utils import resume_checkpoint_if_exists
@@ -231,10 +231,12 @@ def compare_safety_steer_scored_res(
     print_aggregated_summary(out_arr, "Final")
 
 if __name__ == "__main__":
+    set_seed(0)
     compare_safety_steer_scored_res(
         model_name = "huihui-ai/Llama-3.2-3B-Instruct-abliterated",
         max_output = 256,
-        # since this is greater than max_output we will always steer every token in every response
+        # Since this is greater than max_output, we can steer the activation of every token if it is in the unsafe
+        # you could use this to limit the effect of steering so it doesn't steer the whole response.
         max_steer_tokens = 2000,
         dataset_name = "databricks/databricks-dolly-15k",
         layers = [10, 12, 14],

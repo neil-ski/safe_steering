@@ -8,7 +8,7 @@ from tqdm import tqdm
 
 from train_linear_model import train_linear_model
 from util_types import ModelName
-from utils import UNSAFE, generate_no_steer, project_onto_plane, safety_steer
+from utils import UNSAFE, generate_no_steer, project_onto_plane, safety_steer, set_seed
 from filtered_indices import indices
 from bucket_utils import resume_checkpoint_if_exists
 from shield_gemma_reward_model import GemmaRewardModel
@@ -209,6 +209,7 @@ def compare_safety_steer_safeness(
     print_aggregated_summary(out_arr, "Final")
 
 if __name__ == "__main__":
+    set_seed(0)
     compare_safety_steer_safeness(
         model_name = "huihui-ai/Llama-3.2-3B-Instruct-abliterated",
         max_output = 256,

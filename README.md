@@ -59,7 +59,27 @@ docker run --rm -it \
 
 ```
 
+Experiment 5:
+```
+docker run --rm -it \
+  --gpus all \
+  -e HF_TOKEN \
+  -v $(pwd)/gcs_key.json:/workspace/safe_steer/gcs_key.json \
+  safe-steer python -m experiments.experiment_5
+
+```
+
 Because we are building the docker image on the same machine we are running it on, I've included a `.dockerignore` file to not copy your sensitive info like your `gcs_key.json` file and any big irrelevant files like `.git`. Feel free to modify the `.dockerignore` file to suit your needs.
+
+You can also start a shell in the container with 
+
+``
+docker run --rm -it \
+  --gpus all \
+  safe-steer /bin/bash
+```
+
+but you'll have to set `HF_TOKEN` and `gcs_key.json` within the shell for the experiments to work. 
 
 # Building locally
 
