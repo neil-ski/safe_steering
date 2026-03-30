@@ -8,7 +8,7 @@ from datasets import load_dataset, concatenate_datasets
 
 from train_linear_model import train_linear_model
 from util_types import ModelName
-from utils import SAFE, generate_no_steer, project_onto_plane, safety_steer
+from utils import SAFE, generate_no_steer, project_onto_plane, safety_steer, set_seed
 from filtered_indices import indices
 from phi_4_judge import Phi4Judge
 from bucket_utils import resume_checkpoint_if_exists
