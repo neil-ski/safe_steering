@@ -84,9 +84,9 @@ but you'll have to set `HF_TOKEN` and `gcs_key.json` within the shell for the ex
 # Building locally
 
 ```
-git clone https://github.com/neil-ski/safe_steer.git
+git clone https://github.com/neil-ski/safe_steering.git
 
-cd safe_steer
+cd safe_steering
 
 docker build -t safe-steer .
 
