@@ -1,7 +1,7 @@
 from collections import defaultdict
 
 from datasets import load_dataset
-from gemma_reward_model import GemmaRewardModel
+from shield_gemma_reward_model import GemmaRewardModel
 from utils import set_seed
 
 # We want to ensure that our reward model works for the dataset we are using for training.
